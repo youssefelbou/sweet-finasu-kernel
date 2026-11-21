@@ -20,13 +20,17 @@ jobs:
           git clone https://github.com/LyraVoid/FinaSU
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3
 
-      - name: Integrate FinaSU & Personalize Defconfig
+      - name: Integrate FinaSU & Generate Merged Config
         run: |
+          export PATH="$HOME/build/clang/bin:$PATH"
           cd ~/build/kernel
           ../FinaSU/kernel/setup.sh --dir ~/build/FinaSU
 
-          # Enable FinaSU Built-In & Required Kernel Hooks
-          scripts/config --file arch/arm64/configs/vendor/sweet_defconfig \
+          # Generate base sdmsteppe-perf + sweet.config fragment
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- vendor/sdmsteppe-perf_defconfig vendor/sweet.config
+
+          # Enable FinaSU Built-In & Personalizations in out/.config
+          scripts/config --file out/.config \
             --enable KSU \
             --enable KPROBES \
             --enable HAVE_KPROBES \
@@ -41,11 +45,12 @@ jobs:
             --enable ZRAM \
             --set-str LOCALVERSION "-FinaSU-Personal"
 
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- olddefconfig
+
       - name: Compile Kernel (with KSU_REQUIRE_PREINIT=1)
         run: |
           export PATH="$HOME/build/clang/bin:$PATH"
           cd ~/build/kernel
-          make -j$(nproc --all) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- vendor/sweet_defconfig
           make -j$(nproc --all) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- KSU_REQUIRE_PREINIT=1
 
       - name: Package AnyKernel3 Zip
