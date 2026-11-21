@@ -1,0 +1,64 @@
+name: Build FinaSU Personal Kernel (sweet)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache curl flex git libncurses-dev libssl-dev libelf-dev dwarves python3 python-is-python3 zip unzip wget zstd
+
+      - name: Clone Toolchain, Kernel Source, FinaSU & AnyKernel3
+        run: |
+          mkdir -p ~/build && cd ~/build
+          git clone --depth=1 https://gitlab.com/ThankYouMario/android_prebuilts_clang-standalone -b 17 clang
+          git clone --depth=1 https://github.com/LineageOS/android_kernel_xiaomi_sm6150 -b lineage-21 kernel
+          git clone https://github.com/LyraVoid/FinaSU
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3
+
+      - name: Integrate FinaSU & Personalize Defconfig
+        run: |
+          cd ~/build/kernel
+          ../FinaSU/kernel/setup.sh --dir ~/build/FinaSU
+
+          # Enable FinaSU Built-In & Required Kernel Hooks
+          scripts/config --file arch/arm64/configs/vendor/sweet_defconfig \
+            --enable KSU \
+            --enable KPROBES \
+            --enable HAVE_KPROBES \
+            --enable KPROBE_EVENTS \
+            --enable KALLSYMS_ALL \
+            --enable EXT4_FS \
+            --enable HEADERS_INSTALL \
+            --enable TCP_CONG_ADVANCED \
+            --enable TCP_CONG_BBR \
+            --enable DEFAULT_BBR \
+            --enable NET_SCH_FQ_CODEL \
+            --enable ZRAM \
+            --set-str LOCALVERSION "-FinaSU-Personal"
+
+      - name: Compile Kernel (with KSU_REQUIRE_PREINIT=1)
+        run: |
+          export PATH="$HOME/build/clang/bin:$PATH"
+          cd ~/build/kernel
+          make -j$(nproc --all) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- vendor/sweet_defconfig
+          make -j$(nproc --all) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- KSU_REQUIRE_PREINIT=1
+
+      - name: Package AnyKernel3 Zip
+        run: |
+          cd ~/build/AnyKernel3
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
+          sed -i 's|block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;|block=/dev/block/bootdevice/by-name/boot;|g' anykernel.sh
+          cp ~/build/kernel/out/arch/arm64/boot/Image.gz-dtb .
+          [ -f ~/build/kernel/out/arch/arm64/boot/dtbo.img ] && cp ~/build/kernel/out/arch/arm64/boot/dtbo.img .
+          zip -r9 ~/build/FinaSU-sweet-Personal-AK3.zip * -x .git README.md *placeholder
+
+      - name: Upload Flashable Kernel Zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: FinaSU-sweet-Personal-AK3
+          path: ~/build/FinaSU-sweet-Personal-AK3.zip
