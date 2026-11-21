@@ -1,28 +1,84 @@
-name: Build FinaSU Personal Kernel (sweet)
+name: Build FinaSU Built-In Kernel (sweet)
 
 on:
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  build-kernel:
-    name: Build Kernel
+  build:
     runs-on: ubuntu-22.04
     steps:
-      - name: Build FinaSU Kernel
-        uses: dabao1955/kernel_build_action@main
-        with:
-          kernel-url: https://github.com/LineageOS/android_kernel_xiaomi_sm6150
-          kernel-branch: lineage-21
-          arch: arm64
-          config: vendor/sdmsteppe-perf_defconfig
-          merge-configs: '["arch/arm64/configs/vendor/sweet.config"]'
-          ksu: true
-          ksu-url: https://github.com/LyraVoid/FinaSU
-          ksu-branch: main
-          anykernel3: true
-          release: true
-          extra-cmd: |
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache curl flex git libncurses-dev libssl-dev libelf-dev dwarves python3 python-is-python3 zip unzip wget zstd gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+
+      - name: Clone Official AOSP Clang, LineageOS Kernel, FinaSU & AnyKernel3
+        run: |
+          mkdir -p ~/build && cd ~/build
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b android14-release aosp-clang
+          git clone --depth=1 https://github.com/LineageOS/android_kernel_xiaomi_sm6150 -b lineage-21 kernel
+          git clone https://github.com/LyraVoid/FinaSU
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3
+
+      - name: Integrate FinaSU & Configure Sweet Defconfig
+        run: |
+          cd ~/build/kernel
+          # Official FinaSU integration script
+          ~/build/FinaSU/kernel/setup.sh --dir ~/build/FinaSU
+
+          # Merge sdmsteppe-perf base with sweet device fragment using LineageOS's native merge script
+          ARCH=arm64 scripts/kconfig/merge_config.sh -m arch/arm64/configs/vendor/sdmsteppe-perf_defconfig arch/arm64/configs/vendor/sweet.config
+          mv .config arch/arm64/configs/vendor/sweet_finasu_defconfig
+
+          # Enable FinaSU's 5 mandatory Built-In configs + BBR + custom version
+          scripts/config --file arch/arm64/configs/vendor/sweet_finasu_defconfig \
+            --enable KSU \
+            --enable KPROBES \
+            --enable HAVE_KPROBES \
+            --enable KPROBE_EVENTS \
+            --enable KALLSYMS_ALL \
+            --enable EXT4_FS \
+            --enable HEADERS_INSTALL \
+            --enable TCP_CONG_ADVANCED \
+            --enable TCP_CONG_BBR \
+            --enable DEFAULT_BBR \
+            --enable NET_SCH_FQ_CODEL \
+            --enable ZRAM \
+            --set-str LOCALVERSION "-FinaSU-Personal"
+
+      - name: Compile Kernel (Official KSU_REQUIRE_PREINIT=1)
+        run: |
+          CLANG_DIR=$(find ~/build/aosp-clang -maxdepth 2 -name "clang-r*" | sort | tail -n 1)
+          export PATH="$CLANG_DIR/bin:$PATH"
+          cd ~/build/kernel
+
+          make -j$(nproc --all) O=out \
+            ARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            vendor/sweet_finasu_defconfig
+
+          make -j$(nproc --all) O=out \
+            ARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             KSU_REQUIRE_PREINIT=1
+
+      - name: Package Flashable AnyKernel3 Zip
+        run: |
+          cd ~/build/AnyKernel3
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
+          sed -i 's|block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;|block=/dev/block/bootdevice/by-name/boot;|g' anykernel.sh
+          cp ~/build/kernel/out/arch/arm64/boot/Image.gz-dtb .
+          [ -f ~/build/kernel/out/arch/arm64/boot/dtbo.img ] && cp ~/build/kernel/out/arch/arm64/boot/dtbo.img .
+          zip -r9 ~/build/FinaSU-sweet-BuiltIn.zip * -x .git README.md *placeholder
+
+      - name: Upload FinaSU Kernel Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FinaSU-sweet-BuiltIn
+          path: ~/build/FinaSU-sweet-BuiltIn.zip
