@@ -30,7 +30,7 @@ jobs:
           ARCH=arm64 scripts/kconfig/merge_config.sh -m arch/arm64/configs/vendor/sdmsteppe-perf_defconfig arch/arm64/configs/vendor/sweet.config
           mv .config arch/arm64/configs/vendor/sweet_finasu_defconfig
 
-          # Enable FinaSU's 5 mandatory Built-In configs + BBR + custom version
+          # Enable FinaSU's mandatory Built-In configs + BBR + ZRAM + custom version
           scripts/config --file arch/arm64/configs/vendor/sweet_finasu_defconfig \
             --enable KSU \
             --enable KPROBES \
@@ -59,6 +59,15 @@ jobs:
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             vendor/sweet_finasu_defconfig
+
+          # Generate Target UAPI headers at out/usr/include required by FinaSU preinit runner
+          make -j$(nproc --all) O=out \
+            ARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            headers_install
 
           make -j$(nproc --all) O=out \
             ARCH=arm64 \
